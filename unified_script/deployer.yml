@@ -1,0 +1,194 @@
+---
+- name: Ansible script testing creation of AWS resources using Ansible
+  hosts: localhost
+  vars_files:
+    - /etc/ansible/testdir/vars.yml
+  gather_facts: false
+
+  tasks:
+    - name: create SSH-only security group
+      ec2_group:
+        name: ssh_only_sg-22
+        description: SSH-only security group
+        vpc_id: "{{ vpc }}"
+        region: "{{ region }}"
+        rules:
+          - proto: tcp
+            ports:
+            - 22
+            cidr_ip: "{{ sg_cidr }}"
+            rule_desc: SSH
+        rules_egress:
+          - proto: all
+            cidr_ip: 0.0.0.0/0
+      register: sec_gp
+
+    - name: supply security_group ID
+      debug:
+        msg: security group ID is {{ sec_gp.group_id }}
+
+    - name: create an EC2 instance
+      ec2:
+        key_name: "{{ keypair }}"
+        group: ssh_only_sg-22
+        instance_type: "{{ instance_type }}"
+        image: "{{ ami }}"
+        wait: true
+        region: "{{ region }}"
+        count: "{{ num_instances }}"
+        instance_tags:
+          Name: "{{ instance_name }}"
+          resource_owner: "{{ owner }}"
+        vpc_subnet_id: "{{ subnet }}"
+        # set to no if in private subnet with NAT gateway
+        assign_public_ip: yes
+      register: ec2
+
+    - name: add instances to the hosts
+      add_host:
+        hostname: "{{ item.private_ip }}"
+        groupname: workload
+      loop: "{{ ec2.instances }}"
+
+    - name: Wait for SSH to come up on new hosts
+      delegate_to: "{{ item.private_ip }}"
+      wait_for_connection:
+        delay: 30
+        timeout: 320
+      loop: "{{ ec2.instances }}"
+
+    - name: Provide EC2 details
+      debug:
+        msg: new EC2 details are {{ item }}
+      loop: "{{ ec2.instances }}"
+
+    - name: Write IPs to secondary hosts
+      lineinfile:
+        path: /etc/ansible/testdir/hosts2
+        line: "{{ item.private_ip }}"
+        insertafter: '\[workload\]'
+        state: present
+      loop: "{{ ec2.instances }}"
+
+
+- name: contact new hosts, update and install Python 3.7 + Pandas
+  hosts: workload
+  become: True
+
+  tasks:
+    - name: upgrade all packages
+      yum:
+        name: '*'
+        state: latest
+        update_cache: yes
+
+    - name: install the 'Development tools' package group
+      yum:
+        name: "@Development tools"
+        state: present
+
+    - name: install Python build prereqs
+      yum:
+        name: "{{ packages }}"
+      vars:
+        packages:
+        - openssl-devel
+        - bzip2-devel
+        - libffi-devel
+        - zlib-devel
+        - ncurses-devel
+        - sqlite-devel
+        - readline-devel
+        - tk-devel
+        - gdbm-devel
+        #- db4-devel (Berkley DB not found. Not required)
+        - libpcap-devel
+        - xz-devel
+        - expat-devel
+
+    - name: download Python 3.7.7 source
+      get_url:
+        url: https://www.python.org/ftp/python/3.7.7/Python-3.7.7.tgz
+        dest: /usr/src
+        mode: '0755'
+
+    - name: untar downloaded file
+      unarchive:
+        src: /usr/src/Python-3.7.7.tgz
+        dest: /usr/src
+        remote_src: yes
+
+    - name: Configure Python
+      command: './configure --prefix=/usr/local --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib"'
+      args:
+        chdir: /usr/src/Python-3.7.7
+
+    - name: Compile Python 3.7.7
+      command: make altinstall
+      args:
+        chdir: /usr/src/Python-3.7.7
+
+    - name: Install pandas Python module
+      pip:
+        name: pandas
+        executable: /usr/local/bin/pip3.7
+
+
+- name: Create new users on new servers
+  hosts: workload
+  vars_files:
+    - /etc/ansible/testdir/vars.yml
+  become: True
+
+  tasks:
+    - name: create user and generate SSH key
+      user:
+        name: "{{ item }}"
+      loop: "{{ user_list }}"
+
+    # if user list supplied as file with new user on each line
+    # - name: create users
+    #   user: 
+    #     name: "{{ item }}"
+    #   with_lines: cat files/users.txt
+
+    # if "distribute keys" means generate keys for each user
+    # - name: Create 2048-bit SSH key for users under id_rsa file
+    #   user:
+    #     name: "{{ item }}"
+    #     generate_ssh_key: yes
+    #     ssh_key_bits: 2048
+    #     ssh_key_file: .ssh/id_rsa
+    #   loop: "{{ user_list }}"
+
+    # if "distribute keys" means upload users public keys to servers
+    - name: Add users public keys to their accounts
+      authorized_key:
+        user: "{{ item }}"
+        state: present
+        key: "{{ lookup('file', 'files/' + item + '.key.pub') }}"
+      loop: "{{ user_list }}"
+
+
+- name: Transfer and run python script
+  hosts: workload
+  vars_files:
+    - /etc/ansible/testdir/vars.yml
+
+  tasks:
+    - name: transfer Python script file to servers
+      copy:
+        src: "{{ path_to_script }}"
+        dest: /home/centos/myscript.py
+        mode: '0754'
+
+    - name: execute script
+      script: "{{ path_to_script }}"
+      args:
+        executable: /usr/local/bin/python3.7
+      register: output
+
+    - name: Display output (if any)
+      debug:
+        msg: "{{ output.stdout_lines }}"
+...
