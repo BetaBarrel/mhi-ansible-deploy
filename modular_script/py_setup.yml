@@ -1,0 +1,63 @@
+---
+- name: contact new hosts, update and install Python 3.7 + Pandas
+  hosts: workload
+  become: True
+
+  tasks:
+    - name: upgrade all packages
+      yum:
+        name: '*'
+        state: latest
+        update_cache: yes
+
+    - name: install the 'Development tools' package group
+      yum:
+        name: "@Development tools"
+        state: present
+
+    - name: install Python build prereqs
+      yum:
+        name: "{{ packages }}"
+      vars:
+        packages:
+        - openssl-devel
+        - bzip2-devel
+        - libffi-devel
+        - zlib-devel
+        - ncurses-devel
+        - sqlite-devel
+        - readline-devel
+        - tk-devel
+        - gdbm-devel
+        #- db4-devel (Berkley DB not found. Not required)
+        - libpcap-devel
+        - xz-devel
+        - expat-devel
+
+    - name: download Python 3.7.7 source
+      get_url:
+        url: https://www.python.org/ftp/python/3.7.7/Python-3.7.7.tgz
+        dest: /usr/src
+        mode: '0755'
+
+    - name: untar downloaded file
+      unarchive:
+        src: /usr/src/Python-3.7.7.tgz
+        dest: /usr/src
+        remote_src: yes
+
+    - name: Configure Python
+      command: './configure --prefix=/usr/local --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib"'
+      args:
+        chdir: /usr/src/Python-3.7.7
+
+    - name: Compile Python 3.7.7
+      command: make altinstall
+      args:
+        chdir: /usr/src/Python-3.7.7
+
+    - name: Install pandas Python module
+      pip:
+        name: pandas
+        executable: /usr/local/bin/pip3.7
+...

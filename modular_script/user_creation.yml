@@ -1,0 +1,36 @@
+---
+- name: Create new users on new servers
+  hosts: workload
+  vars_files:
+    - /etc/ansible/testdir/vars.yml
+  become: True
+
+  tasks:
+    - name: create user and generate SSH key
+      user:
+        name: "{{ item }}"
+      loop: "{{ user_list }}"
+
+    # if user list supplied as file with new user on each line
+    # - name: create users
+    #   user: 
+    #     name: "{{ item }}"
+    #   with_lines: cat files/users.txt
+
+    # if "distribute keys" means generate keys for each user
+    # - name: Create 2048-bit SSH key for users under id_rsa file
+    #   user:
+    #     name: "{{ item }}"
+    #     generate_ssh_key: yes
+    #     ssh_key_bits: 2048
+    #     ssh_key_file: .ssh/id_rsa
+    #   loop: "{{ user_list }}"
+
+    # if "distribute keys" means upload users public keys to servers
+    - name: Add users public keys to their accounts
+      authorized_key:
+        user: "{{ item }}"
+        state: present
+        key: "{{ lookup('file', 'files/' + item + '.key.pub') }}"
+      loop: "{{ user_list }}"
+...

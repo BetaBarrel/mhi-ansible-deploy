@@ -1,0 +1,23 @@
+---
+- name: Transfer and run python script
+  hosts: workload
+  vars_files:
+    - /etc/ansible/testdir/vars.yml
+
+  tasks:
+    - name: transfer Python script file to servers
+      copy:
+        src: "{{ path_to_script }}"
+        dest: /home/centos/myscript.py
+        mode: '0754'
+
+    - name: execute script
+      script: "{{ path_to_script }}"
+      args:
+        executable: /usr/local/bin/python3.7
+      register: output
+
+    - name: Display output (if any)
+      debug:
+        msg: "{{ output.stdout_lines }}"
+...

@@ -1,0 +1,72 @@
+---
+- name: Ansible script testing creation of AWS resources using Ansible
+  hosts: localhost
+  vars_files:
+    - /etc/ansible/testdir/vars.yml
+  gather_facts: false
+
+  tasks:
+    - name: create SSH-only security group
+      ec2_group:
+        name: ssh_only_sg-22
+        description: SSH-only security group
+        vpc_id: "{{ vpc }}"
+        region: "{{ region }}"
+        rules:
+          - proto: tcp
+            ports:
+            - 22
+            cidr_ip: "{{ sg_cidr }}"
+            rule_desc: SSH
+        rules_egress:
+          - proto: all
+            cidr_ip: 0.0.0.0/0
+      register: sec_gp
+
+    - name: supply security_group ID
+      debug:
+        msg: security group ID is {{ sec_gp.group_id }}
+
+    - name: create an EC2 instance
+      ec2:
+        key_name: "{{ keypair }}"
+        group: ssh_only_sg-22
+        instance_type: "{{ instance_type }}"
+        image: "{{ ami }}"
+        wait: true
+        region: "{{ region }}"
+        count: "{{ num_instances }}"
+        instance_tags:
+          Name: "{{ instance_name }}"
+          resource_owner: "{{ owner }}"
+        vpc_subnet_id: "{{ subnet }}"
+        # set to no if in private subnet with NAT gateway
+        assign_public_ip: yes
+      register: ec2
+
+    - name: add instances to the hosts
+      add_host:
+        hostname: "{{ item.private_ip }}"
+        groupname: workload
+      loop: "{{ ec2.instances }}"
+
+    - name: Wait for SSH to come up on new hosts
+      delegate_to: "{{ item.private_ip }}"
+      wait_for_connection:
+        delay: 30
+        timeout: 320
+      loop: "{{ ec2.instances }}"
+
+    - name: Provide EC2 details
+      debug:
+        msg: new EC2 details are {{ item }}
+      loop: "{{ ec2.instances }}"
+
+    - name: Write IPs to secondary hosts
+      lineinfile:
+        path: /etc/ansible/testdir/hosts2
+        line: "{{ item.private_ip }}"
+        insertafter: '\[workload\]'
+        state: present
+      loop: "{{ ec2.instances }}"
+...

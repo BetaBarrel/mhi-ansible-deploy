@@ -1,0 +1,6 @@
+---
+- import_playbook: aws_infrastructure.yml
+- import_playbook: py_setup.yml
+- import_playbook: user_creation.yml
+- import_playbook: py_script.yml
+...
